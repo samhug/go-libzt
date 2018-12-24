@@ -1,7 +1,6 @@
 package libzt
 
 /*
-#cgo darwin LDFLAGS: -L ${SRCDIR} -lzt_darwin -lstdc++ -lm -std=c++11
 #cgo linux LDFLAGS: -L ${SRCDIR} -lzt_linux -lstdc++ -lm -std=c++11
 
 #include "libzt.h"
@@ -9,45 +8,93 @@ package libzt
 */
 import "C"
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"net"
-	"strings"
+	"strconv"
 	"syscall"
 	"unsafe"
 )
 
-const ZT_MAX_IPADDR_LEN = C.ZT_MAX_IPADDR_LEN
-
 type ZT struct {
-	id       string
+	id       uint64
 	homePath string
 }
 
 func Init(id string, homePath string) *ZT {
-	zt := &ZT{id: id, homePath: homePath}
-	C.zts_simple_start(C.CString(homePath), C.CString(id))
+	_id, err := parseNWID(id)
+	if err != nil {
+		panic(err)
+	}
+
+	zt := &ZT{id: _id, homePath: homePath}
+	C.zts_startjoin(C.CString(homePath), C.uint64_t(_id))
 	return zt
 }
 
-func (zt *ZT) GetIPv4Address() net.IP {
-	address := make([]byte, ZT_MAX_IPADDR_LEN)
-	C.zts_get_ipv4_address(C.CString(zt.id), (*C.char)(unsafe.Pointer(&address[0])), C.ZT_MAX_IPADDR_LEN)
-	address = bytes.Trim(address, "\x00")
-
-	ip, _, _ := net.ParseCIDR(strings.TrimSpace(string(address)))
-	return ip
+func (zt *ZT) GetNumAssignedAddresses() int {
+	return (int)(C.zts_get_num_assigned_addresses(C.uint64_t(zt.id)))
 }
 
-func (zt *ZT) GetIPv6Address() net.IP {
-	address := make([]byte, ZT_MAX_IPADDR_LEN)
-	C.zts_get_ipv6_address(C.CString(zt.id), (*C.char)(unsafe.Pointer(&address[0])), C.ZT_MAX_IPADDR_LEN)
-	address = bytes.Trim(address, "\x00")
+func (zt *ZT) GetAddressAtIndex(index int) (net.IP, error) {
+	rsa := &syscall.RawSockaddrAny{}
+	rsa_size := syscall.SizeofSockaddrAny
 
-	ip, _, _ := net.ParseCIDR(strings.TrimSpace(string(address)))
-	return ip
+	ret := (int)(C.zts_get_address_at_index(C.uint64_t(zt.id), C.int(index), (*C.struct_sockaddr)(unsafe.Pointer(rsa)), (*C.uint)(unsafe.Pointer(&rsa_size))))
+	if ret != 0 {
+		return nil, errors.New("No address found")
+	}
+
+	switch rsa.Addr.Family {
+	case syscall.AF_INET:
+		pp := (*syscall.RawSockaddrInet4)(unsafe.Pointer(rsa))
+		return net.IPv4(pp.Addr[0], pp.Addr[1], pp.Addr[2], pp.Addr[3]), nil
+
+	case syscall.AF_INET6:
+		pp := (*syscall.RawSockaddrInet6)(unsafe.Pointer(rsa))
+		return net.IP{
+			pp.Addr[0], pp.Addr[1], pp.Addr[2], pp.Addr[3],
+			pp.Addr[4], pp.Addr[5], pp.Addr[6], pp.Addr[7],
+			pp.Addr[8], pp.Addr[9], pp.Addr[10], pp.Addr[11],
+			pp.Addr[12], pp.Addr[13], pp.Addr[14], pp.Addr[15],
+		}, nil
+	default:
+		return nil, syscall.EAFNOSUPPORT
+	}
+}
+
+func (zt *ZT) GetAddress(family int) (net.IP, error) {
+	rsa := &syscall.RawSockaddrAny{}
+
+	ret := (int)(C.zts_get_address(C.uint64_t(zt.id), (*C.struct_sockaddr_storage)(unsafe.Pointer(rsa)), C.int(family)))
+	if ret != 0 {
+		return nil, errors.New("No address found")
+	}
+
+	switch family {
+	case syscall.AF_INET:
+		pp := (*syscall.RawSockaddrInet4)(unsafe.Pointer(rsa))
+		return net.IPv4(pp.Addr[0], pp.Addr[1], pp.Addr[2], pp.Addr[3]), nil
+
+	case syscall.AF_INET6:
+		pp := (*syscall.RawSockaddrInet6)(unsafe.Pointer(rsa))
+		return net.IP{
+			pp.Addr[0], pp.Addr[1], pp.Addr[2], pp.Addr[3],
+			pp.Addr[4], pp.Addr[5], pp.Addr[6], pp.Addr[7],
+			pp.Addr[8], pp.Addr[9], pp.Addr[10], pp.Addr[11],
+			pp.Addr[12], pp.Addr[13], pp.Addr[14], pp.Addr[15],
+		}, nil
+	default:
+		return nil, syscall.EAFNOSUPPORT
+	}
+}
+
+func (zt *ZT) GetIPv4Address() (net.IP, error) {
+	return zt.GetAddress(syscall.AF_INET)
+}
+
+func (zt *ZT) GetIPv6Address() (net.IP, error) {
+	return zt.GetAddress(syscall.AF_INET6)
 }
 
 func (zt *ZT) Listen6(port uint16) (net.Listener, error) {
@@ -67,7 +114,12 @@ func (zt *ZT) Listen6(port uint16) (net.Listener, error) {
 		return nil, errors.New("ERROR listening")
 	}
 
-	return &TCP6Listener{fd: fd, localIP: zt.GetIPv6Address()}, nil
+	ip, err := zt.GetIPv6Address()
+	if err != nil {
+		return nil, err
+	}
+
+	return &TCP6Listener{fd: fd, localIP: ip}, nil
 }
 
 func (zt *ZT) Listen6UDP(port uint16) (net.PacketConn, error) {
@@ -82,22 +134,30 @@ func (zt *ZT) Listen6UDP(port uint16) (net.PacketConn, error) {
 		return nil, errors.New("ERROR on binding")
 	}
 
-	return &PacketConnection{fd: fd, localIP: zt.GetIPv6Address(), localPort: port}, nil
+	ip, err := zt.GetIPv6Address()
+	if err != nil {
+		return nil, err
+	}
+
+	return &PacketConnection{fd: fd, localIP: ip, localPort: port}, nil
 }
 
 func (zt *ZT) Dial6UDP(ip string, port uint16) (net.Conn, error) {
 	clientSocket := syscall.RawSockaddrInet6{Flowinfo: 0, Family: syscall.AF_INET6, Port: htonl(port), Addr: parseIPV6(ip)}
 
-	fmt.Println("1")
 	fd := socket(30, 2, 17)
-	fmt.Println("2")
 	if fd < 0 {
 		return nil, errors.New("Error in opening socket")
 	}
 
+	localIP, err := zt.GetIPv6Address()
+	if err != nil {
+		return nil, err
+	}
+
 	conn := &Connection{
 		fd:         fd,
-		localIP:    zt.GetIPv6Address(),
+		localIP:    localIP,
 		localPort:  clientSocket.Port,
 		remoteIp:   net.ParseIP(ip),
 		remotePort: port,
@@ -118,9 +178,14 @@ func (zt *ZT) Connect6(ip string, port uint16) (net.Conn, error) {
 		return nil, errors.New("Unable to connect")
 	}
 
+	localIP, err := zt.GetIPv6Address()
+	if err != nil {
+		return nil, err
+	}
+
 	conn := &Connection{
 		fd:         fd,
-		localIP:    zt.GetIPv6Address(),
+		localIP:    localIP,
 		localPort:  clientSocket.Port,
 		remoteIp:   net.ParseIP(ip),
 		remotePort: port,
@@ -166,4 +231,11 @@ func parseIPV6(ipString string) [16]byte {
 	var arr [16]byte
 	copy(arr[:], ip)
 	return arr
+}
+
+func parseNWID(nwid string) (uint64, error) {
+	if len(nwid) != 16 {
+		return 0, errors.New("invalid nwid, must be 16 hex digits")
+	}
+	return strconv.ParseUint(nwid, 16, 64)
 }

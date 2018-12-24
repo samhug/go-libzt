@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/selvakn/libzt"
-	"github.com/golang/glog"
 	"fmt"
+	"github.com/golang/glog"
+	"github.com/samuelhug/go-libzt"
 	"os"
 )
 

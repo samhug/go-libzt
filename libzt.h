@@ -1,6 +1,6 @@
 /*
  * ZeroTier SDK - Network Virtualization Everywhere
- * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2018  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,127 +24,51 @@
  * of your own application.
  */
 
-#ifndef ZT_LIBZT_H
-#define ZT_LIBZT_H
+/**
+ * @file
+ *
+ * Application-facing, partially-POSIX-compliant socket API
+ */
 
+#ifndef LIBZT_H
+#define LIBZT_H
+
+#include "libztDebug.h"
+#include "libztDefs.h"
+
+#include <stdlib.h>
+#include <stdint.h>
+ 
+#if defined(__linux__) || defined(__APPLE__)
 #include <sys/socket.h>
-#include <poll.h>
+#include <unistd.h>
+#endif
+
+#if defined(_WIN32)
+#include <WinSock2.h>
+#include <stdint.h>
+#include <WS2tcpip.h>
+//int inet_pton(int af, const char *src, void *dst);
+#endif
 
 /****************************************************************************/
-/* LWIP                                                                     */
+/* DLL export for Windows (and other cruft)                                 */
 /****************************************************************************/
 
-#define LWIP_APPLICATION_POLL_FREQ         2
-#define LWIP_TCP_TIMER_INTERVAL            50
-#define LWIP_STATUS_TMR_INTERVAL           500 // How often we check connection statuses (in ms)
+#if defined(__MING32__) || defined(__MING64__)
+#ifdef ADD_EXPORTS
+#define ZT_SOCKET_API __declspec(dllexport)
+#else
+#define ZT_SOCKET_API __declspec(dllimport)
+#endif
+#define ZTCALL __cdecl
+#else
+#define ZT_SOCKET_API
+#define ZTCALL
+#endif
 
 /****************************************************************************/
-/* Defines                                                                  */
-/****************************************************************************/
-
-#define ZT_SDK_MTU                         ZT_MAX_MTU
-#define ZT_PHY_POLL_INTERVAL               2 // ms
-#define ZT_ACCEPT_RECHECK_DELAY            100 // ms (for blocking zts_accept() calls)
-#define ZT_CONNECT_RECHECK_DELAY           100 // ms (for blocking zts_connect() calls)
-#define ZT_API_CHECK_INTERVAL              500 // ms
-
-#define MAX_PICO_FRAME_RX_BUF_SZ           ZT_MAX_MTU * 128
-
-#define ZT_TCP_TX_BUF_SZ                   1024 * 1024 * 128
-#define ZT_TCP_RX_BUF_SZ                   1024 * 1024 * 128
-#define ZT_UDP_TX_BUF_SZ                   ZT_MAX_MTU
-#define ZT_UDP_RX_BUF_SZ                   ZT_MAX_MTU * 10
-
-// Send and Receive buffer sizes for the network stack
-// By default picoTCP sets them to 16834, this is good for embedded-scale
-// stuff but you might want to consider higher values for desktop and mobile
-// applications.
-#define ZT_STACK_TCP_SOCKET_TX_SZ          ZT_TCP_TX_BUF_SZ
-#define ZT_STACK_TCP_SOCKET_RX_SZ          ZT_TCP_RX_BUF_SZ
-
-// Maximum size we're allowed to read or write from a stack socket
-// This is put in place because picoTCP seems to fail at higher values.
-// If you use another stack you can probably bump this up a bit.
-#define ZT_STACK_SOCKET_WR_MAX             4096
-#define ZT_STACK_SOCKET_RD_MAX             4096*4
-
-#define ZT_CORE_VERSION_MAJOR              1
-#define ZT_CORE_VERSION_MINOR              2
-#define ZT_CORE_VERSION_REVISION           5
-
-#define ZT_LIB_VERSION_MAJOR               1
-#define ZT_LIB_VERSION_MINOR               1
-#define ZT_LIB_VERSION_REVISION            4
-
-#define ZT_MAX_IPADDR_LEN                  64
-#define ZT_ID_LEN                          10
-#define ZT_VER_STR_LEN                     6
-#define ZT_HOME_PATH_MAX_LEN               128
-
-#define ZT_SOCK_STATE_NONE                 100
-#define ZT_SOCK_STATE_UNHANDLED_CONNECTED  101
-#define ZT_SOCK_STATE_CONNECTED            102
-#define ZT_SOCK_STATE_LISTENING            103
-
-#define ZT_ERR_OK                          0
-#define ZT_ERR_GENERAL_FAILURE             -88
-
-// Since extra time is required to send a mesage via a socket through the
-// stack and ZT service, calling a zts_close() immediately after a "successful"
-// zts_write() might cause data loss, for this reason, sockets will SO_LINGER for
-// a short period of time by default as a precaution.
-
-#define ZT_SOCK_BEHAVIOR_LINGER            true
-#define ZT_SOCK_BEHAVIOR_LINGER_TIME       3  // s
-
-// Wait time for socket closure if data is still present in the write queue
-#define ZT_SDK_CLTIME                      60
-
-// After closing a pico_socket, other threads might still try to use the
-// Connection object for remaining data I/O, as a safety measure we will wait to
-// delete this Connection object until the socket has been closed for some arbitrary
-// amount of time and it is safe to assume any clients interacting with this
-// socket have read some sort of error code from the API.
-#define ZT_CONNECTION_DELETE_WAIT_TIME     30 // s
-
-// Interval for performing cleanup tasks on Tap/Stack objects
-#define ZT_HOUSEKEEPING_INTERVAL           10 // s
-
-// Whether or not we want libzt to shit its pants
-#define ZT_EXIT_ON_GENERAL_FAIL            false
-
-/****************************************************************************/
-/* Socket API Signatures                                                    */
-/****************************************************************************/
-
-#define ZT_SETSOCKOPT_SIG int fd, int level, int optname, const void *optval, socklen_t optlen
-#define ZT_GETSOCKOPT_SIG int fd, int level, int optname, void *optval, socklen_t *optlen
-#define ZT_SENDMSG_SIG int fd, const struct msghdr *msg, int flags
-#define ZT_SENDTO_SIG int fd, const void *buf, size_t len, int flags, const struct sockaddr *addr, socklen_t addrlen
-#define ZT_RECV_SIG int fd, void *buf, size_t len, int flags
-#define ZT_RECVFROM_SIG int fd, void *buf, size_t len, int flags, struct sockaddr *addr, socklen_t *addrlen
-#define ZT_RECVMSG_SIG int fd, struct msghdr *msg,int flags
-#define ZT_SEND_SIG int fd, const void *buf, size_t len, int flags
-#define ZT_READ_SIG int fd, void *buf, size_t len
-#define ZT_WRITE_SIG int fd, const void *buf, size_t len
-#define ZT_SHUTDOWN_SIG int fd, int how
-#define ZT_SOCKET_SIG int socket_family, int socket_type, int protocol
-#define ZT_CONNECT_SIG int fd, const struct sockaddr *addr, socklen_t addrlen
-#define ZT_BIND_SIG int fd, const struct sockaddr *addr, socklen_t addrlen
-#define ZT_LISTEN_SIG int fd, int backlog
-#define ZT_ACCEPT4_SIG int fd, struct sockaddr *addr, socklen_t *addrlen, int flags
-#define ZT_ACCEPT_SIG int fd, struct sockaddr *addr, socklen_t *addrlen
-#define ZT_CLOSE_SIG int fd
-#define ZT_POLL_SIG struct pollfd *fds, nfds_t nfds, int timeout
-#define ZT_SELECT_SIG int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout
-#define ZT_GETSOCKNAME_SIG int fd, struct sockaddr *addr, socklen_t *addrlen
-#define ZT_GETPEERNAME_SIG int fd, struct sockaddr *addr, socklen_t *addrlen
-#define ZT_FCNTL_SIG int fd, int cmd, int flags
-#define ZT_SYSCALL_SIG long number, ...
-
-/****************************************************************************/
-/* SDK Socket API (ZeroTier Service Controls)                               */
-/* Implemented in libzt.cpp                                                 */
+/* ZeroTier Service Controls                                                */
 /****************************************************************************/
 
 #ifdef __cplusplus
@@ -152,313 +76,548 @@ extern "C" {
 #endif
 
 /**
- * Start core ZeroTier service (generates identity)
+ * @brief (optional) Sets the port for the background libzt service. If this function is called
+ * with a port number between 1-65535 it will attempt to bind to that port. If it is called with
+ * a port number of 0 it will attempt to randomly search for an available port. If this function
+ * is never called, the service will try to bind on LIBZT_DEFAULT_PORT which is 9994.
+ *
+ * @usage Should be called at the beginning of your application before `zts_startjoin()`
+ * @param portno Port number
+ * @return 0 if successful; or -1 if failed
  */
-void zts_start(const char *path);
+ZT_SOCKET_API int ZTCALL zts_set_service_port(int portno);
 
 /**
- * Convenience function: Starts, waits for service, joins one network, waits for address, returns
+ * @brief Starts libzt
+ *
+ * @usage Should be called at the beginning of your application. Will blocks until all of the following conditions are met:
+ * - ZeroTier core service has been initialized
+ * - Cryptographic identity has been generated or loaded from directory specified by `path`
+ * - Virtual network is successfully joined
+ * - IP address is assigned by network controller service
+ * @param path path directory where cryptographic identities and network configuration files are stored and retrieved
+ *              (`identity.public`, `identity.secret`)
+ * @param nwid A 16-digit hexidecimal network identifier (e.g. Earth: `8056c2e21c000001`)
+ * @return 0 if successful; or 1 if failed
  */
-void zts_simple_start(const char *path, const char *nwid);
+ZT_SOCKET_API int ZTCALL zts_start(const char *path, int blocking);
 
 /**
- * Stops the core ZeroTier service
+ * @brief Starts libzt
+ *
+ * @usage Should be called at the beginning of your application. Will blocks until all of the following conditions are met:
+ * - ZeroTier core service has been initialized
+ * - Cryptographic identity has been generated or loaded from directory specified by `path`
+ * - Virtual network is successfully joined
+ * - IP address is assigned by network controller service
+ * @param path path directory where cryptographic identities and network configuration files are stored and retrieved
+ *              (`identity.public`, `identity.secret`)
+ * @param nwid A 16-digit hexidecimal network identifier (e.g. Earth: `8056c2e21c000001`)
+ * @return 0 if successful; or 1 if failed
  */
-void zts_stop();
+ZT_SOCKET_API int ZTCALL zts_startjoin(const char *path, const uint64_t nwid);
 
 /**
- * Join a network
+ * @brief Stops ZeroTier core services, stack drivers, stack threads, etc
+ *
+ * @usage This should be called at the end of your program or when you do not anticipate communicating over ZeroTier
+ * @return Returns 0 on success, -1 on failure
  */
-void zts_join(const char * nwid);
+ZT_SOCKET_API void ZTCALL zts_stop();
 
 /**
- * Join a network - Just create the dir and conf file required, don't instruct the core to do anything
+ * @brief Return whether ZeroTier core service is currently running
+ *
+ * @usage Call this after zts_start()
+ * @return 1 if running, 0 if not running
  */
-void zts_join_soft(const char * filepath, const char * nwid);
+ZT_SOCKET_API int ZTCALL zts_core_running();
 
 /**
- * Leave a network
+ * @brief Return whether the userspace network stack is currently running
+ *
+ * @usage Call this after zts_start()
+ * @return 1 if running, 0 if not running
  */
-void zts_leave(const char * nwid);
+ZT_SOCKET_API int ZTCALL zts_stack_running();
 
 /**
- * Leave a network - Only delete the .conf file, this will prevent the service from joining upon next startup
+ * @brief Return whether libzt is ready to handle socket API calls. Alternatively you could 
+ * have just called zts_startjoin(path, nwid)
+ *
+ * @usage Call this after zts_start()
+ * @return 1 if running, 0 if not running
  */
-void zts_leave_soft(const char * filepath, const char * nwid);
+ZT_SOCKET_API int ZTCALL zts_ready();
 
 /**
- * Return the home path for this instance of ZeroTier
- * FIXME: double check this is correct on all platforms
+ * @brief Join a network
+ *
+ * @usage Call this from application thread. Only after zts_start() has succeeded
+ * @param nwid A 16-digit hexidecimal virtual network ID
+ * @return 0 if successful, -1 for any failure
  */
-void zts_get_homepath(char *homePath, const int len);
+ZT_SOCKET_API int ZTCALL zts_join(const uint64_t nwid);
 
 /**
- * Provides core ZeroTier service version
+ * @brief Leave a network
+ *
+ * @usage Call this from application thread. Only after zts_start() has succeeded
+ * @param nwid A 16-digit hexidecimal virtual network ID
+ * @return 0 if successful, -1 for any failure
  */
-void zts_core_version(char *ver);
+ZT_SOCKET_API int ZTCALL zts_leave(const uint64_t nwid);
 
 /**
- * Provides core libzt service version
+ * @brief Copies the configuration path used by ZeroTier into the provided buffer
+ *
+ * @usage
+ * @param homePath Path to ZeroTier configuration files
+ * @param len Length of destination buffer
+ * @return 
  */
-void zts_lib_version(char *ver);
+ZT_SOCKET_API void ZTCALL zts_get_path(char *homePath, const size_t len);
 
 /**
- * Get device ID
- * 10-digit hex + NULL byte
+ * @brief Returns the node ID of this instance
+ *
+ * @usage Call this after zts_start() and/or when zts_running() returns true
+ * @return
  */
-int zts_get_device_id(char *devID);
+ZT_SOCKET_API uint64_t ZTCALL zts_get_node_id();
 
 /**
- * Check whether the service is running
+ * @brief Returns the node ID of this instance (as read from a file)
+ *
+ * @usage Call with or without starting the service with zts_start()
+ * @param filepath Path to ZeroTier configuration files
+ * @return
  */
-int zts_running();
+ZT_SOCKET_API uint64_t ZTCALL zts_get_node_id_from_file(const char *filepath);
 
 /**
- * Returns whether any IPv6 address has been assigned to the SockTap for this network
- * - This is used as an indicator of readiness for service for the ZeroTier core and stack
+ * @brief Returns whether any address has been assigned to the SockTap for this network
+ *
+ * @usage This is used as an indicator of readiness for service for the ZeroTier core and stack
+ * @param nwid Network ID
+ * @return
  */
-int zts_has_ipv4_address(const char *nwid);
+ZT_SOCKET_API int ZTCALL zts_has_address(const uint64_t nwid);
+
 
 /**
- * Returns whether any IPv4 address has been assigned to the SockTap for this network
- * - This is used as an indicator of readiness for service for the ZeroTier core and stack
+ * @brief Returns the number of addresses assigned to this node for the given nwid
+ *
+ * @param nwid Network ID
+ * @return The number of addresses assigned
  */
-int zts_has_ipv6_address(const char *nwid);
+ZT_SOCKET_API int ZTCALL zts_get_num_assigned_addresses(const uint64_t nwid);
 
 /**
- * Returns whether any address has been assigned to the SockTap for this network
- * - This is used as an indicator of readiness for service for the ZeroTier core and stack
+ * @brief Returns the assigned address located at the given index
+ *
+ * @usage The indices of each assigned address are not guaranteed and should only
+ * be used for iterative purposes.
+ * @param nwid Network ID
+ * @param index location of assigned address
+ * @return The number of addresses assigned
  */
-int zts_has_address(const char *nwid);
+ZT_SOCKET_API int ZTCALL zts_get_address_at_index(
+	const uint64_t nwid, const int index, struct sockaddr *addr, socklen_t *addrlen);
 
 /**
- * Get IPV4 Address for this device on a given network
- * FIXME: Only returns first address found for given protocol and network (should be enough for now)
+ * @brief Get IP address for this device on a given network
+ *
+ * @usage FIXME: Only returns first address found, good enough for most cases
+ * @param nwid Network ID
+ * @param addr Destination structure for address
+ * @param addrlen size of destination address buffer, will be changed to size of returned address
+ * @return 0 if an address was successfully found, -1 if failure
  */
-void zts_get_ipv4_address(const char *nwid, char *addrstr, const int addrlen);
+ZT_SOCKET_API int ZTCALL zts_get_address(
+	const uint64_t nwid, struct sockaddr_storage *addr, const int address_family);
 
 /**
- * Get IPV6 Address for this device on a given network
- * FIXME: Only returns first address found for given protocol and network (should be enough for now)
+ * @brief Computes a 6PLANE IPv6 address for the given Network ID and Node ID
+ *
+ * @usage Can call any time
+ * @param addr Destination structure for address
+ * @param nwid Network ID 
+ * @param nodeId Node ID
+ * @return
  */
-void zts_get_ipv6_address(const char *nwid, char *addrstr, const int addrlen);
+ZT_SOCKET_API void ZTCALL zts_get_6plane_addr(
+	struct sockaddr_storage *addr, const uint64_t nwid, const uint64_t nodeId);
 
 /**
- * Returns a 6PLANE IPv6 address given a network ID and zerotier ID
+ * @brief Computes a RFC4193 IPv6 address for the given Network ID and Node ID
+ *
+ * @usage Can call any time
+ * @param addr Destination structure for address
+ * @param nwid Network ID 
+ * @param nodeId Node ID
+ * @return
  */
-void zts_get_6plane_addr(char *addr, const char *nwid, const char *devID);
+ZT_SOCKET_API void ZTCALL zts_get_rfc4193_addr(
+	struct sockaddr_storage *addr, const uint64_t nwid, const uint64_t nodeId);
 
 /**
- * Returns an RFC 4193 IPv6 address given a network ID and zerotier ID
+ * @brief Return the number of peers
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @return
  */
-void zts_get_rfc4193_addr(char *addr, const char *nwid, const char *devID);
-
-/**
- * Return the number of peers on this network
- */
-unsigned long zts_get_peer_count();
-
-/**
- * Get the IP address of a peer if a direct path is available
- */
-int zts_get_peer_address(char *peer, const char *devID);
-
-/**
- * Enable HTTP control plane (traditionally used by zerotier-cli)
- * - Allows one to control the ZeroTier core via HTTP requests
- * FIXME: Implement
- */
-void zts_enable_http_control_plane();
-
-/**
- * Disable HTTP control plane (traditionally used by zerotier-cli)
- * - Allows one to control the ZeroTier core via HTTP requests
- * FIXME: Implement
- */
-void zts_disable_http_control_plane();
+ZT_SOCKET_API unsigned long zts_get_peer_count();
 
 /****************************************************************************/
-/* SDK Socket API (Socket User Controls)                                    */
-/* - These functions are designed to work just like regular socket calls    */
-/*   but are provisioned and handled by ZeroTier                            */
-/* Implemented in Socket.c                                                  */
+/* POSIX-like socket API                                                    */
 /****************************************************************************/
 
 /**
- * Creates a socket
- */
-int zts_socket(ZT_SOCKET_SIG);
-
- /**
- * Connect a socket to a remote host
- */
-int zts_connect(ZT_CONNECT_SIG);
-
-/**
- * Binds a socket to a specific address
- *  - To accept connections on a specific ZeroTier network you must
- *    use this bind call with an address which is associated with that network
+ * @brief Create a socket
  *
- *  For instance, given the following networks:
- *     - nwid = 97afaf1963cc6a90 (10.9.0.0/24)
- *     - nwid = 23bfae5663c8b188 (192.168.0.0/24)
+ * This function will return an integer which can be used in much the same way as a
+ * typical file descriptor, however it is only valid for use with libzt library calls
+ * as this is merely a facade which is associated with the internal socket representation
+ * of both the network stacks and drivers.
  *
- *  In order to accept a connection on 97afaf1963cc6a90, you
- *  should bind to 10.9.0.0
+ * @usage Call this after zts_start() has succeeded
+ * @param socket_family Address family (AF_INET, AF_INET6)
+ * @param socket_type Type of socket (SOCK_STREAM, SOCK_DGRAM, SOCK_RAW)
+ * @param protocol Protocols supported on this socket
+ * @return
  */
-int zts_bind(ZT_BIND_SIG);
+ZT_SOCKET_API int ZTCALL zts_socket(int socket_family, int socket_type, int protocol);
 
 /**
- * Listen for incoming connections
+ * @brief Connect a socket to a remote host
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param addr Remote host address to connect to
+ * @param addrlen Length of address
+ * @return
  */
-int zts_listen(ZT_LISTEN_SIG);
+ZT_SOCKET_API int ZTCALL zts_connect(int fd, const struct sockaddr *addr, socklen_t addrlen);
 
 /**
- * Accept a connection
+ * @brief Bind a socket to a virtual interface
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param addr Local interface address to bind to
+ * @param addrlen Length of address
+ * @return
  */
-int zts_accept(ZT_ACCEPT_SIG);
+ZT_SOCKET_API int ZTCALL zts_bind(int fd, const struct sockaddr *addr, socklen_t addrlen);
 
 /**
- * Accept a connection
+ * @brief Listen for incoming connections
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param backlog Number of backlogged connection allowed
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_listen(int fd, int backlog);
+
+/**
+ * @brief Accept an incoming connection
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param addr Address of remote host for accepted connection
+ * @param addrlen Length of address
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_accept(int fd, struct sockaddr *addr, socklen_t *addrlen);
+
+/**
+ * @brief Accept an incoming connection
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param addr Address of remote host for accepted connection
+ * @param addrlen Length of address
+ * @param flags
+ * @return
  */
 #if defined(__linux__)
-	int zts_accept4(ZT_ACCEPT4_SIG);
+	int zts_accept4(int fd, struct sockaddr *addr, socklen_t *addrlen, int flags);
 #endif
 
 /**
- * Set socket options
- */
-int zts_setsockopt(ZT_SETSOCKOPT_SIG);
-
-/**
- * Get socket options
- */
-int zts_getsockopt(ZT_GETSOCKOPT_SIG);
-
-/**
- * Get socket name
- */
-int zts_getsockname(ZT_GETSOCKNAME_SIG);
-
-/**
- * Get a peer name
- */
-int zts_getpeername(ZT_GETPEERNAME_SIG);
-
-/**
- * Close a socket
- * TODO: Check that closing a socket immediately after writing doesn't behave in
- * an undefined manner
- */
-int zts_close(ZT_CLOSE_SIG);
-
-/**
- * waits for one of a set of file descriptors to become ready to perform I/O.
- */
-int zts_poll(ZT_POLL_SIG);
-
-/**
- * monitor multiple file descriptors, waiting until one or more of the file descriptors become "ready"
- */
-int zts_select(ZT_SELECT_SIG);
-
-/**
- * Issue file control commands on a socket
- */
-int zts_fcntl(ZT_FCNTL_SIG);
-
-/**
- * Send data to a remote host
- */
-ssize_t zts_sendto(ZT_SENDTO_SIG);
-
-/**
- * Send a message to a remote host
- */
-ssize_t zts_sendmsg(ZT_SENDMSG_SIG);
-
-/**
- * Receive data from a remote host
- */
-ssize_t zts_recvfrom(ZT_RECVFROM_SIG);
-
-/**
- * Receive a message from a remote host
- */
-ssize_t zts_recvmsg(ZT_RECVMSG_SIG);
-
-/**
- * Read bytes from socket onto buffer
- *  - Note, this function isn't strictly necessary, you can
- *    use a regular read() call as long as the socket fd was
- *    created via a zts_socket() call.
- */
-int zts_read(ZT_READ_SIG);
-
-/**
- * Write bytes from buffer to socket
- *  - Note, this function isn't strictly necessary, you can
- *    use a regular write() call as long as the socket fd was
- *    created via a zts_socket() call.
- */
-int zts_write(ZT_WRITE_SIG);
-
-/*
- * Sends a FIN segment
- */
-int zts_shutdown(ZT_SHUTDOWN_SIG);
-
-/****************************************************************************/
-/* SDK Socket API Helper functions/objects --- DONT CALL THESE DIRECTLY     */
-/****************************************************************************/
-
-#ifdef __cplusplus
-namespace ZeroTier
-{
-  class picoTCP;
-  extern ZeroTier::picoTCP *picostack;
-
-  class lwIP;
-  extern ZeroTier::lwIP *lwipstack;
-}
-#endif
-
-/*
- * Gets a pointer to a pico_socket given a file descriptor
- */
-#if defined(STACK_PICO)
-int zts_get_pico_socket(int fd, struct pico_socket **s);
-#endif
-
-/**
- * Returns the number of sockets either already provisioned or waiting to be
- * Some network stacks may have a limit on the number of sockets that they can
- * safely handle due to timer construction, this is a way to check that we
- * haven't passed that limit. Someday if multiple stacks are used simultaneously
- * the logic for this function should change accordingly.
- */
-int zts_nsockets();
-
-/*
- * Returns maximum number of sockets allowed by network stack
- */
-int zts_maxsockets();
-
-int pico_ntimers();
-/**
- * Don't call this directly, use 'zts_start()'
- */
-void *zts_start_service(void *thread_id);
-
-/*
+ * @brief Set socket options
  *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param level Protocol level to which option name should apply
+ * @param optname Option name to set
+ * @param optval Source of option value to set
+ * @param optlen Length of option value
+ * @return
  */
-void handle_general_failure();
+ZT_SOCKET_API int ZTCALL zts_setsockopt(
+	int fd, int level, int optname, const void *optval, socklen_t optlen);
 
-#include "Debug.hpp"
+/**
+ * @brief Get socket options
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param level Protocol level to which option name should apply
+ * @param optname Option name to get
+ * @param optval Where option value will be stored
+ * @param optlen Length of value
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_getsockopt(
+	int fd, int level, int optname, void *optval, socklen_t *optlen);
+
+/**
+ * @brief Get socket name
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param addr Name associated with this socket
+ * @param addrlen Length of name
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_getsockname(int fd, struct sockaddr *addr, socklen_t *addrlen);
+
+/**
+ * @brief Get the peer name for the remote end of a connected socket
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param addr Name associated with remote end of this socket
+ * @param addrlen Length of name
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_getpeername(int fd, struct sockaddr *addr, socklen_t *addrlen);
+
+/**
+ * @brief Gets current hostname
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param name
+ * @param len
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_gethostname(char *name, size_t len);
+
+/**
+ * @brief Sets current hostname
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param name
+ * @param len
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_sethostname(const char *name, size_t len);
+
+/**
+ * @brief Return a pointer to an object with the following structure describing an internet host referenced by name
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param name
+ * @return Returns pointer to hostent structure otherwise NULL if failure
+ */
+ZT_SOCKET_API struct hostent *zts_gethostbyname(const char *name);
+
+/**
+ * @brief Close a socket
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_close(int fd);
+
+/**
+ * @brief Waits for one of a set of file descriptors to become ready to perform I/O.
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fds
+ * @param nfds
+ * @param timeout
+ * @return
+ */
+#if defined(__linux__)
+/*
+typedef unsigned int nfds_t;
+int zts_poll(struct pollfd *fds, nfds_t nfds, int timeout);
+*/
+#endif
+
+/**
+ * @brief Monitor multiple file descriptors, waiting until one or more of the file descriptors become "ready"
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param nfds 
+ * @param readfds
+ * @param writefds
+ * @param exceptfds
+ * @param timeout
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_select(
+	int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
+
+/**
+ * @brief Issue file control commands on a socket
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param cmd
+ * @param flags
+ * @return
+ */
+#if defined(_WIN32)
+#define F_SETFL 0
+#define O_NONBLOCK 0
+#endif
+ZT_SOCKET_API int ZTCALL zts_fcntl(int fd, int cmd, int flags);
+
+/**
+ * @brief Control a device
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param request
+ * @param argp
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_ioctl(int fd, unsigned long request, void *argp);
+
+/**
+ * @brief Send data to remote host
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param buf Pointer to data buffer
+ * @param len Length of data to write
+ * @param flags
+ * @return
+ */
+ZT_SOCKET_API ssize_t ZTCALL zts_send(int fd, const void *buf, size_t len, int flags);
+
+/**
+ * @brief Send data to remote host
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param buf Pointer to data buffer
+ * @param len Length of data to write
+ * @param flags
+ * @param addr Destination address
+ * @param addrlen Length of destination address
+ * @return
+ */
+ZT_SOCKET_API ssize_t ZTCALL zts_sendto(
+	int fd, const void *buf, size_t len, int flags, const struct sockaddr *addr, socklen_t addrlen);
+
+/**
+ * @brief Send message to remote host
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param msg
+ * @param flags
+ * @return
+ */
+ZT_SOCKET_API ssize_t ZTCALL zts_sendmsg(int fd, const struct msghdr *msg, int flags);
+
+/**
+ * @brief Receive data from remote host
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param buf Pointer to data buffer
+ * @param len Length of data buffer
+ * @param flags
+ * @return
+ */
+ZT_SOCKET_API ssize_t ZTCALL zts_recv(int fd, void *buf, size_t len, int flags);
+
+/**
+ * @brief Receive data from remote host
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param buf Pointer to data buffer
+ * @param len Length of data buffer
+ * @param flags
+ * @param addr
+ * @param addrlen
+ * @return
+ */
+ZT_SOCKET_API ssize_t ZTCALL zts_recvfrom(
+	int fd, void *buf, size_t len, int flags, struct sockaddr *addr, socklen_t *addrlen);
+
+/**
+ * @brief Receive a message from remote host
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param msg
+ * @param flags
+ * @return
+ */
+ZT_SOCKET_API ssize_t ZTCALL zts_recvmsg(int fd, struct msghdr *msg,int flags);
+
+/**
+ * @brief Read bytes from socket onto buffer
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param buf Pointer to data buffer
+ * @param len Length of data buffer to receive data
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_read(int fd, void *buf, size_t len);
+
+/**
+ * @brief Write bytes from buffer to socket
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param buf Pointer to data buffer
+ * @param len Length of buffer to write
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_write(int fd, const void *buf, size_t len);
+
+/**
+ * @brief Shut down some aspect of a socket (read, write, or both)
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param fd File descriptor (only valid for use with libzt calls)
+ * @param how Which aspects of the socket should be shut down
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_shutdown(int fd, int how);
+
+/**
+ * @brief Adds a DNS nameserver for the network stack to use
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param addr Address for DNS nameserver
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_add_dns_nameserver(struct sockaddr *addr);
+
+/**
+ * @brief Removes a DNS nameserver
+ *
+ * @usage Call this after zts_start() has succeeded
+ * @param addr Address for DNS nameserver
+ * @return
+ */
+ZT_SOCKET_API int ZTCALL zts_del_dns_nameserver(struct sockaddr *addr);
 
 #ifdef __cplusplus
 } // extern "C"
 #endif
 
-#endif // ZT_ZEROTIERSDK_H
+#endif // _H
