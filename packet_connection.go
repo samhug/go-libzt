@@ -1,12 +1,12 @@
 package libzt
 
 import (
-	"net"
-	"time"
-	"fmt"
 	"errors"
-	"syscall"
+	"fmt"
+	"net"
 	"strconv"
+	"syscall"
+	"time"
 )
 
 type PacketConnection struct {
@@ -46,7 +46,7 @@ func (c *PacketConnection) WriteTo(b []byte, addr net.Addr) (int, error) {
 	return len(b), err
 
 }
-func toSocketAddr(udpAddr *net.UDPAddr) (*syscall.SockaddrInet6) {
+func toSocketAddr(udpAddr *net.UDPAddr) *syscall.SockaddrInet6 {
 	zoneId, _ := strconv.Atoi(udpAddr.Zone)
 	sa := &syscall.SockaddrInet6{Port: udpAddr.Port, ZoneId: uint32(zoneId)}
 	copy(sa.Addr[:], udpAddr.IP)

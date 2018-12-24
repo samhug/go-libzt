@@ -1,17 +1,17 @@
 package libzt
 
 import (
-	"net"
-	"time"
-	"syscall"
 	"errors"
 	"fmt"
+	"net"
+	"syscall"
+	"time"
 )
 
 type Connection struct {
-	fd         int
-	localIP    net.IP
-	localPort  uint16
+	fd        int
+	localIP   net.IP
+	localPort uint16
 
 	remoteIp   net.IP
 	remotePort uint16

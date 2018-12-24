@@ -12,11 +12,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"syscall"
 	"unsafe"
-	"fmt"
 )
 
 const ZT_MAX_IPADDR_LEN = C.ZT_MAX_IPADDR_LEN
