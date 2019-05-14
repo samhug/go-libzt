@@ -2,6 +2,8 @@
 
 Go Wrapper for [Zerotier SDK](https://github.com/zerotier/libzt/)
 
+Note: this project is a Work-In-Progress
+
 ### Build Examples
 ```
 go get -v github.com/samhug/go-libzt
