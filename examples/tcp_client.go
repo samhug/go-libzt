@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/golang/glog"
-	"github.com/samuelhug/go-libzt"
+	"github.com/samhug/go-libzt"
 	"os"
 	"time"
 )
